@@ -7,27 +7,21 @@ from nltk.tokenize import sent_tokenize
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 from flask_cors import CORS
 
-# 1. Set up an NLTK data directory (ephemeral on Render free)
 NLTK_DATA_DIR = "/tmp/nltk_data"
 os.makedirs(NLTK_DATA_DIR, exist_ok=True)
 
-# 2. Tell NLTK to look in that directory
 nltk.data.path.append(NLTK_DATA_DIR)
 
-# 3. Force-download punkt and punkt_tab
 nltk.download('punkt', download_dir=NLTK_DATA_DIR, quiet=False, force=True)
-# If 'punkt_tab' is still needed, forcibly download it
-# (Sometimes 'punkt_tab' is an internal artifact that gets downloaded automatically with 'punkt',
-# but let's force it just in case)
+
 try:
     nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR, quiet=False, force=True)
 except:
-    pass  # If it fails, ignore (some versions of NLTK don’t require this explicitly)
+    pass  
 
 app = Flask(__name__)
 CORS(app)
 
-# Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 MODEL_NAME = "kumarutkarsh99/biasfree"
@@ -70,7 +64,6 @@ def identify_biased_sentences(text, classifier, threshold=0.3):
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        # Check if text is provided in form data
         if 'text' in request.form:
             text = request.form['text'].strip()
             if not text:
@@ -78,7 +71,6 @@ def analyze():
             results = identify_biased_sentences(text, classifier)
             return jsonify({"results": results})
         
-        # Check if a file is provided
         if 'file' in request.files:
             file = request.files['file']
             if file.filename == '':
