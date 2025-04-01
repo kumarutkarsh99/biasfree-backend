@@ -7,23 +7,29 @@ from nltk.tokenize import sent_tokenize
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 from flask_cors import CORS
 
-# Set NLTK_DATA to a writable temporary directory
-nltk_data_dir = "/tmp/nltk_data"
-os.makedirs(nltk_data_dir, exist_ok=True)
-os.environ["NLTK_DATA"] = nltk_data_dir
+# 1. Set up an NLTK data directory (ephemeral on Render free)
+NLTK_DATA_DIR = "/tmp/nltk_data"
+os.makedirs(NLTK_DATA_DIR, exist_ok=True)
 
-# Download NLTK tokenizer resources quietly
-nltk.download('punkt', download_dir=nltk_data_dir, quiet=True)
-nltk.download('punkt_tab', download_dir=nltk_data_dir, quiet=True)
+# 2. Tell NLTK to look in that directory
+nltk.data.path.append(NLTK_DATA_DIR)
 
-# Initialize Flask app
+# 3. Force-download punkt and punkt_tab
+nltk.download('punkt', download_dir=NLTK_DATA_DIR, quiet=False, force=True)
+# If 'punkt_tab' is still needed, forcibly download it
+# (Sometimes 'punkt_tab' is an internal artifact that gets downloaded automatically with 'punkt',
+# but let's force it just in case)
+try:
+    nltk.download('punkt_tab', download_dir=NLTK_DATA_DIR, quiet=False, force=True)
+except:
+    pass  # If it fails, ignore (some versions of NLTK don’t require this explicitly)
+
 app = Flask(__name__)
 CORS(app)
 
-# Set device (Render free tier has CPU only)
+# Set device
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-# Load public model from Hugging Face
 MODEL_NAME = "kumarutkarsh99/biasfree"
 
 try:
@@ -31,7 +37,6 @@ try:
     model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME).to(device)
     model.eval()
 
-    # Set up the text classification pipeline
     classifier = pipeline(
         "text-classification",
         model=model,
@@ -43,11 +48,9 @@ except Exception as e:
     print(f"❌ Error loading model: {e}")
     classifier = None
 
-# Function to detect biased sentences
 def identify_biased_sentences(text, classifier, threshold=0.3):
     if classifier is None:
         return []
-    
     sentences = sent_tokenize(text)
     results = []
     
@@ -57,8 +60,8 @@ def identify_biased_sentences(text, classifier, threshold=0.3):
         score = result[0]['score']
         is_biased = 1 if label == 'LABEL_1' and score > threshold else 0
         results.append({
-            "sentence": sentence, 
-            "bias_score": round(score, 4), 
+            "sentence": sentence,
+            "bias_score": round(score, 4),
             "label": "BIAS" if is_biased else "NEUTRAL"
         })
     
@@ -67,16 +70,15 @@ def identify_biased_sentences(text, classifier, threshold=0.3):
 @app.route('/analyze', methods=['POST'])
 def analyze():
     try:
-        # Handle text input via form-data
+        # Check if text is provided in form data
         if 'text' in request.form:
             text = request.form['text'].strip()
             if not text:
                 return jsonify({"error": "Text input is empty"}), 400
-            
             results = identify_biased_sentences(text, classifier)
             return jsonify({"results": results})
         
-        # Handle file uploads (CSV or JSON)
+        # Check if a file is provided
         if 'file' in request.files:
             file = request.files['file']
             if file.filename == '':
@@ -89,23 +91,22 @@ def analyze():
                     df = pd.read_json(file, encoding='utf-8')
                 else:
                     return jsonify({"error": "Unsupported file type. Use CSV or JSON"}), 400
-                
+
                 if df.empty or df.shape[1] == 0:
                     return jsonify({"error": "File is empty or has no columns"}), 400
-                
+
                 all_results = []
                 for row in df.iloc[:, 0]:
                     row_results = identify_biased_sentences(str(row), classifier)
                     all_results.extend(row_results)
-                
+
                 return jsonify({"results": all_results})
             except Exception as e:
                 return jsonify({"error": f"File processing failed: {str(e)}"}), 400
-        
+
         return jsonify({"error": "No valid input provided"}), 400
     except Exception as e:
         return jsonify({"error": f"Server error: {str(e)}"}), 500
 
-# Run the app (for local testing)
 if __name__ == '__main__':
     app.run(host="0.0.0.0", port=5000)
